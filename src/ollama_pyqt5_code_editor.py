@@ -57,7 +57,9 @@
 # === End of Instructions ===
 
 import sys
+import os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout
+from PyQt5.QtGui import QIcon
 # If not already there: from PyQt5.QtWidgets import QApplication, QMainWindow
 import requests # For making HTTP requests
 import json     # For handling JSON data
@@ -94,6 +96,11 @@ class CodeEditorWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("PyQt5 Ollama Code Editor")
         self.setGeometry(100, 100, 850, 650) # Slightly adjusted size for better look
+        
+        # Set window icon
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "app_icon.png")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
 
         # Central widget
         central_widget = QWidget()
