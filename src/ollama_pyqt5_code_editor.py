@@ -58,9 +58,12 @@
 
 import sys
 import os
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout
-from PyQt5.QtGui import QIcon
-# If not already there: from PyQt5.QtWidgets import QApplication, QMainWindow
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
+                             QTextEdit, QPushButton, QHBoxLayout, QSplitter, 
+                             QLabel, QComboBox, QStatusBar, QFrame)
+from PyQt5.QtGui import QIcon, QFont, QSyntaxHighlighter, QTextCharFormat, QColor, QPalette
+from PyQt5.QtCore import QRegExp, Qt
+from PyQt5.Qsci import QsciScintilla, QsciLexerPython
 import requests # For making HTTP requests
 import json     # For handling JSON data
 
@@ -91,120 +94,272 @@ import json     # For handling JSON data
 # - To apply to the whole application: app.setStyleSheet("your style rules")
 # ---
 
+class PythonSyntaxHighlighter(QSyntaxHighlighter):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # Define syntax highlighting rules
+        self.highlighting_rules = []
+        
+        # Keywords
+        keyword_format = QTextCharFormat()
+        keyword_format.setColor(QColor(86, 156, 214))  # VS Code blue
+        keyword_format.setFontWeight(QFont.Bold)
+        keywords = ['and', 'as', 'assert', 'break', 'class', 'continue', 'def',
+                   'del', 'elif', 'else', 'except', 'exec', 'finally', 'for',
+                   'from', 'global', 'if', 'import', 'in', 'is', 'lambda',
+                   'not', 'or', 'pass', 'print', 'raise', 'return', 'try',
+                   'while', 'with', 'yield']
+        for word in keywords:
+            pattern = QRegExp(r'\b' + word + r'\b')
+            self.highlighting_rules.append((pattern, keyword_format))
+        
+        # Strings
+        string_format = QTextCharFormat()
+        string_format.setColor(QColor(206, 145, 120))  # VS Code orange
+        self.highlighting_rules.append((QRegExp(r'".*"'), string_format))
+        self.highlighting_rules.append((QRegExp(r"'.*'"), string_format))
+        
+        # Comments
+        comment_format = QTextCharFormat()
+        comment_format.setColor(QColor(106, 153, 85))  # VS Code green
+        comment_format.setFontItalic(True)
+        self.highlighting_rules.append((QRegExp(r'#.*'), comment_format))
+        
+        # Numbers
+        number_format = QTextCharFormat()
+        number_format.setColor(QColor(181, 206, 168))  # VS Code light green
+        self.highlighting_rules.append((QRegExp(r'\b\d+\b'), number_format))
+    
+    def highlightBlock(self, text):
+        for pattern, format in self.highlighting_rules:
+            expression = QRegExp(pattern)
+            index = expression.indexIn(text)
+            while index >= 0:
+                length = expression.matchedLength()
+                self.setFormat(index, length, format)
+                index = expression.indexIn(text, index + length)
+
+
+class ModernCodeEditor(QsciScintilla):
+    def __init__(self):
+        super().__init__()
+        
+        # Set lexer for Python syntax highlighting
+        lexer = QsciLexerPython()
+        self.setLexer(lexer)
+        
+        # Set font
+        font = QFont('Consolas', 12)
+        font.setFamily('Consolas')
+        font.setFixedPitch(True)
+        font.setPointSize(12)
+        self.setFont(font)
+        
+        # Set margin for line numbers
+        self.setMarginType(0, QsciScintilla.NumberMargin)
+        self.setMarginWidth(0, "0000")
+        self.setMarginLineNumbers(0, True)
+        self.setMarginsBackgroundColor(QColor(30, 30, 30))
+        self.setMarginsForegroundColor(QColor(128, 128, 128))
+        
+        # Current line highlighting
+        self.setCaretLineVisible(True)
+        self.setCaretLineBackgroundColor(QColor(45, 45, 45))
+        
+        # Set selection colors
+        self.setSelectionBackgroundColor(QColor(38, 79, 120))
+        
+        # Enable brace matching
+        self.setBraceMatching(QsciScintilla.SloppyBraceMatch)
+        
+        # Set colors for dark theme
+        self.setColor(QColor(212, 212, 212))  # Text color
+        self.setPaper(QColor(30, 30, 30))     # Background color
+        
+        # Set indentation
+        self.setIndentationsUseTabs(False)
+        self.setIndentationWidth(4)
+        self.setTabWidth(4)
+        self.setAutoIndent(True)
+
+
 class CodeEditorWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PyQt5 Ollama Code Editor")
-        self.setGeometry(100, 100, 850, 650) # Slightly adjusted size for better look
+        self.setWindowTitle("Ollama Code Editor - VS Code Style")
+        self.setGeometry(100, 100, 1200, 800)
         
         # Set window icon
         icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "app_icon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
 
+        # Set up the UI
+        self.init_ui()
+        self.apply_dark_theme()
+
+    def init_ui(self):
         # Central widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-
-        # Main vertical layout for the central widget
+        
+        # Main vertical layout
         main_layout = QVBoxLayout()
         central_widget.setLayout(main_layout)
-
-        self.init_ui(main_layout)
-        self.apply_styles() # Call a new method to apply styles
-
-    def init_ui(self, main_layout): # Accept main_layout as an argument
-        # --- Explanation of Widgets and Layouts ---
-        # QTextEdit: A widget that allows multi-line text editing. We'll use one for code input and another for output.
-        # QPushButton: A standard command button.
-        # QHBoxLayout: Arranges widgets horizontally. We might use this for the button if we want something next to it.
-        # QVBoxLayout: Arranges widgets vertically. This will be our main layout and also used to stack input/output areas.
-        # ---
-
-        # Code Input Area
-        self.codeInput = QTextEdit()
-        self.codeInput.setObjectName("codeInput") # Added object name for potential specific styling
-        self.codeInput.setPlaceholderText("Enter your code here...")
-        main_layout.addWidget(self.codeInput, 1) # The '1' makes it take more space (stretch factor)
-
-        # Output Display Area
-        # QTextBrowser is like QTextEdit but read-only by default and can render HTML.
-        # For simplicity, we'll start with QTextEdit and can make it read-only.
-        self.outputArea = QTextEdit()
-        self.outputArea.setObjectName("outputArea") # Added object name
-        self.outputArea.setReadOnly(True) # Make it read-only
-        self.outputArea.setPlaceholderText("Ollama's output will appear here...")
-        main_layout.addWidget(self.outputArea, 1) # The '1' makes it take more space
-
-        # Button to send code
-        self.runButton = QPushButton("Run Code")
-        self.runButton.setObjectName("runButton") # Added object name
-        self.runButton.clicked.connect(self.on_run_button_clicked) # Connect the signal to the slot
-        main_layout.addWidget(self.runButton)
-
-        # --- Explanation of Widget Sizing (Stretch Factors) ---
-        # When adding widgets to a QVBoxLayout (or QHBoxLayout), the second argument to addWidget (e.g., 1 in main_layout.addWidget(self.codeInput, 1))
-        # is a stretch factor. Widgets with higher stretch factors will expand more to fill available space compared to those with lower or zero stretch factors.
-        # Here, both QTextEdit widgets are given a stretch factor of 1, so they will share the available vertical space equally after the button gets its preferred size.
-        # ---
-
-    def apply_styles(self):
-        """Applies basic styling to the application widgets."""
         
-        stylesheet = """
-            QMainWindow {
-                background-color: #f0f0f0;
-            }
-            QTextEdit#codeInput, QTextEdit#outputArea {
-                background-color: #ffffff;
-                color: #333333;
-                border: 1px solid #cccccc;
-                border-radius: 4px;
-                font-size: 14px;
+        # Top toolbar
+        toolbar_layout = QHBoxLayout()
+        
+        # Model selection
+        model_label = QLabel("Model:")
+        model_label.setStyleSheet("color: #ffffff; font-weight: bold;")
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(["codellama:7b", "llama3", "mistral", "deepseek-coder"])
+        self.model_combo.setCurrentText("codellama:7b")
+        self.model_combo.setStyleSheet("""
+            QComboBox {
+                background-color: #3c3c3c;
+                color: white;
+                border: 1px solid #555;
                 padding: 5px;
+                border-radius: 3px;
+            }
+            QComboBox::drop-down {
+                border: none;
+            }
+            QComboBox::down-arrow {
+                border: none;
+            }
+        """)
+        
+        toolbar_layout.addWidget(model_label)
+        toolbar_layout.addWidget(self.model_combo)
+        toolbar_layout.addStretch()
+        
+        # Run button in toolbar
+        self.runButton = QPushButton("▶ Run Code")
+        self.runButton.setObjectName("runButton")
+        self.runButton.clicked.connect(self.on_run_button_clicked)
+        toolbar_layout.addWidget(self.runButton)
+        
+        main_layout.addLayout(toolbar_layout)
+        
+        # Create splitter for resizable panes
+        splitter = QSplitter(Qt.Horizontal)
+        
+        # Left pane - Code input
+        left_pane = QWidget()
+        left_layout = QVBoxLayout()
+        left_pane.setLayout(left_layout)
+        
+        input_label = QLabel("Code Input")
+        input_label.setStyleSheet("color: #ffffff; font-weight: bold; padding: 5px;")
+        left_layout.addWidget(input_label)
+        
+        # Use modern code editor
+        self.codeInput = ModernCodeEditor()
+        self.codeInput.setText("# Enter your Python code here\nprint('Hello, Ollama!')")
+        left_layout.addWidget(self.codeInput)
+        
+        # Right pane - Output
+        right_pane = QWidget()
+        right_layout = QVBoxLayout()
+        right_pane.setLayout(right_layout)
+        
+        output_label = QLabel("AI Response")
+        output_label.setStyleSheet("color: #ffffff; font-weight: bold; padding: 5px;")
+        right_layout.addWidget(output_label)
+        
+        self.outputArea = QTextEdit()
+        self.outputArea.setReadOnly(True)
+        self.outputArea.setPlaceholderText("Ollama's response will appear here...")
+        right_layout.addWidget(self.outputArea)
+        
+        # Add panes to splitter
+        splitter.addWidget(left_pane)
+        splitter.addWidget(right_pane)
+        splitter.setSizes([600, 600])  # Equal split initially
+        
+        main_layout.addWidget(splitter)
+        
+        # Status bar
+        self.status_bar = QStatusBar()
+        self.status_bar.showMessage("Ready - Select a model and enter your code")
+        self.setStatusBar(self.status_bar)
+
+    def apply_dark_theme(self):
+        """Apply VS Code-like dark theme"""
+        self.setStyleSheet("""
+            QMainWindow {
+                background-color: #1e1e1e;
+                color: #ffffff;
+            }
+            QWidget {
+                background-color: #1e1e1e;
+                color: #ffffff;
+            }
+            QTextEdit {
+                background-color: #1e1e1e;
+                color: #d4d4d4;
+                border: 1px solid #3c3c3c;
+                font-family: 'Consolas', 'Monaco', monospace;
+                font-size: 14px;
+                padding: 10px;
             }
             QPushButton#runButton {
-                background-color: #007bff;
+                background-color: #0e639c;
                 color: white;
                 border: none;
-                padding: 10px 15px;
+                padding: 8px 16px;
                 border-radius: 4px;
                 font-size: 14px;
+                font-weight: bold;
             }
             QPushButton#runButton:hover {
-                background-color: #0056b3;
+                background-color: #1177bb;
             }
             QPushButton#runButton:pressed {
-                background-color: #004085;
+                background-color: #0d5a87;
             }
-        """
-        self.setStyleSheet(stylesheet)
-        
+            QStatusBar {
+                background-color: #007acc;
+                color: white;
+                border: none;
+            }
+            QSplitter::handle {
+                background-color: #3c3c3c;
+                width: 2px;
+            }
+            QSplitter::handle:hover {
+                background-color: #007acc;
+            }
+        """)
+    
     def on_run_button_clicked(self):
-        """
-        Slot for the runButton's clicked signal.
-        Gets code from input, sends to Ollama, and displays the result.
-        """
-        code_to_send = self.codeInput.toPlainText()
+        """Send code to Ollama and display response"""
+        code_to_send = self.codeInput.text()
         if not code_to_send.strip():
             self.outputArea.setText("Please enter some code.")
+            self.status_bar.showMessage("No code to send")
             return
 
-        # Show some feedback that it's working
-        self.outputArea.setText("Sending to Ollama... Please wait.")
-        QApplication.processEvents() # Allow UI to update
+        self.status_bar.showMessage("Sending to Ollama... Please wait.")
+        self.outputArea.setText("🤖 Sending to Ollama... Please wait.")
+        QApplication.processEvents()
 
-        # IMPORTANT: Remind user they might need to change the model name here or pass it from a UI element eventually
-        # For example, model_name = self.modelSelector.currentText() if you add a QComboBox for model selection.
-        ollama_response = send_code_to_ollama(code_to_send, model_name="your-ollama-coding-model-name") # Ensure this model name is configured by the user
+        model_name = self.model_combo.currentText()
+        ollama_response = send_code_to_ollama(code_to_send, model_name=model_name)
 
         if "error" in ollama_response:
-            self.outputArea.setText(f"Error: {ollama_response['error']}")
-        elif "response" in ollama_response: # This is the expected key for Ollama's non-streaming response
-            self.outputArea.setText(ollama_response["response"])
+            self.outputArea.setText(f"❌ Error: {ollama_response['error']}")
+            self.status_bar.showMessage("Error occurred")
+        elif "response" in ollama_response:
+            self.outputArea.setText(f"🤖 AI Response:\n\n{ollama_response['response']}")
+            self.status_bar.showMessage("Response received successfully")
         else:
-            # Fallback for unexpected response structure
-            self.outputArea.setText(f"Unexpected response from Ollama: {json.dumps(ollama_response, indent=2)}")
+            self.outputArea.setText(f"⚠️ Unexpected response from Ollama:\n\n{json.dumps(ollama_response, indent=2)}")
+            self.status_bar.showMessage("Unexpected response format")
 
 
 # --- Explanation of 'requests' library ---
@@ -217,32 +372,32 @@ class CodeEditorWindow(QMainWindow):
 #   response.json(): Parses the JSON response content into a Python dictionary.
 # ---
 
-def send_code_to_ollama(code_text, model_name="your-ollama-coding-model-name"):
+def send_code_to_ollama(code_text, model_name="codellama:7b"):
     """
     Sends the given code_text to the Ollama API and returns the response.
 
     Args:
         code_text (str): The code to send to Ollama.
         model_name (str): The name of the Ollama model to use.
-                          **IMPORTANT**: User needs to change this!
 
     Returns:
         dict: The JSON response from Ollama as a dictionary, or an error dictionary.
     """
-    # IMPORTANT: Remind the user that this endpoint might need to be changed
-    # if their Ollama instance is not running on the default location.
     ollama_api_url = "http://localhost:11434/api/generate"
 
     payload = {
         "model": model_name,
-        "prompt": code_text,
-        "stream": False  # Keep it simple for now, no streaming
+        "prompt": f"Analyze this code and provide a brief explanation:\n\n```python\n{code_text}\n```",
+        "stream": False,
+        "options": {
+            "temperature": 0.7,
+            "num_predict": 300
+        }
     }
 
     try:
-        # Tell the user that they may need to configure proxies if they are behind one
-        response = requests.post(ollama_api_url, json=payload, timeout=20) # Added timeout
-        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+        response = requests.post(ollama_api_url, json=payload, timeout=120)  # Increased to 2 minutes
+        response.raise_for_status()
         return response.json()
     except requests.exceptions.ConnectionError:
         return {"error": "Connection Error: Could not connect to Ollama. Is it running?"}
@@ -251,7 +406,6 @@ def send_code_to_ollama(code_text, model_name="your-ollama-coding-model-name"):
     except requests.exceptions.HTTPError as e:
         return {"error": f"HTTP Error: {e.response.status_code} - {e.response.text}"}
     except requests.exceptions.RequestException as e:
-        # For any other requests-related errors
         return {"error": f"Request Exception: An unexpected error occurred: {e}"}
     except json.JSONDecodeError:
         return {"error": "JSON Decode Error: Failed to parse Ollama's response."}
@@ -260,13 +414,37 @@ def send_code_to_ollama(code_text, model_name="your-ollama-coding-model-name"):
 def main():
     # Create the QApplication instance
     app = QApplication(sys.argv)
+    
+    # Set application properties
+    app.setApplicationName("Ollama Code Editor")
+    app.setApplicationVersion("1.0")
+    app.setOrganizationName("AI Code Editor")
+    
+    # Set dark theme for the application
+    app.setStyle('Fusion')
+    
+    # Create dark palette
+    palette = QPalette()
+    palette.setColor(QPalette.Window, QColor(30, 30, 30))
+    palette.setColor(QPalette.WindowText, QColor(255, 255, 255))
+    palette.setColor(QPalette.Base, QColor(45, 45, 45))
+    palette.setColor(QPalette.AlternateBase, QColor(60, 60, 60))
+    palette.setColor(QPalette.ToolTipBase, QColor(0, 0, 0))
+    palette.setColor(QPalette.ToolTipText, QColor(255, 255, 255))
+    palette.setColor(QPalette.Text, QColor(255, 255, 255))
+    palette.setColor(QPalette.Button, QColor(60, 60, 60))
+    palette.setColor(QPalette.ButtonText, QColor(255, 255, 255))
+    palette.setColor(QPalette.BrightText, QColor(255, 0, 0))
+    palette.setColor(QPalette.Link, QColor(42, 130, 218))
+    palette.setColor(QPalette.Highlight, QColor(42, 130, 218))
+    palette.setColor(QPalette.HighlightedText, QColor(0, 0, 0))
+    app.setPalette(palette)
 
     # Create the main window
     editor_window = CodeEditorWindow()
     editor_window.show()
 
     # Start the application's event loop
-    # sys.exit(app.exec_()) ensures a clean exit
     sys.exit(app.exec_())
 
 if __name__ == "__main__":
